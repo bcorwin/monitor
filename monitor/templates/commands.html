@@ -17,11 +17,17 @@
 			<div class="innertube">
 				
 				<h1>Server Commands</h1>
-                {% for command,description in command_options %}
-                    <form action="/monitor/commands/{{command}}/" method="get">
-                        <input type="submit" value="{{description}}">
+                <h3>Logging</h3>
+                    <form action="/monitor/commands/F/" method="get">
+                        <input type="submit" value="Force log">
                     </form>
-                {% endfor %}
+                    <form action = "/monitor/commands/" method = "get">
+                        <input type="radio" name="m" value="1">1 minute<br>
+                        <input type="radio" name="m" value="5">5 minutes<br>
+                        <input type="radio" name="m" value="10">10 minutes<br>
+                        <input type="radio" name="m" value="15">15 minutes<br>
+                        <input type="submit" value="Set log freq">
+                    </form>
                 <h2>{{error}}</h2>
                 <h3>{{details}}</h3>
                 
