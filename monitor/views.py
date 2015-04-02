@@ -1,10 +1,17 @@
 from django.shortcuts import render_to_response
 from django.http import HttpResponse, HttpResponseRedirect
 from django.core.urlresolvers import reverse
+from django.core.cache import cache
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.admin.views.decorators import staff_member_required
+from django.template import RequestContext
 
+from monitor.get_config import getActiveConfig, getActiveBeer, SetReadInstant, getProdKey, getTestKey, getArchiveKey, getReadingKey
+from monitor.get_beer import getAllBeer
+from monitor.get_reading import getAllReadings, getLastReading
+from monitor.get_archive import getAllArchives, getLastArchive
 from monitor.middleware import send2middleware
-from monitor.models import Beer, Reading, Config, Archive
+from monitor.models import Beer, Reading
 
 from time import sleep
 from datetime import timedelta
@@ -80,19 +87,6 @@ def getInstantOverride(request):
             instant_override = int(0)
     finally:
         return instant_override
-
-def getActiveConfig():
-    active_config = Config.objects.filter()[:1].get()
-    return active_config
-
-def getActiveBeer():
-    active_config = getActiveConfig()
-    active_beer = active_config.beer
-    return active_beer
-
-def getAllBeer():
-    all_beer = Beer.objects.all()
-    return all_beer
 
 def MaxMinCheck(base, deviation, value, category):
     '''Returns an error string if the input value exceeds the calculated bounds'''
@@ -184,17 +178,10 @@ def createHttpResp(read, value):
         response['temp_unit'] = read.temp_unit
         response['instant_override'] = read.instant_override
         response['instant'] = read.instant
-        response['instant_actual'] = read.instant_actual
+        response['instant_actual'] = read.instant_actual_iso
         response['error_flag'] = read.error_flag
         response['error_details'] = read.error_details
     return response
-
-def SetReadInstant(active_config):
-    '''Set the current instant as active_config.read_last_instant'''
-    right_now = datetime.datetime.now()
-    active_config.read_last_instant = right_now
-    active_config.save()
-    return
 
 #C:\Python34\python -m pdb manage.py runserver
 #Then press 'c'
@@ -204,7 +191,9 @@ def SetReadInstant(active_config):
 def api(request):
 
     key = stringFromPost(request, 'key')
-    if (key == 'beer') or (key == 'test'):
+    prod_key = getProdKey()
+    test_key = getTestKey()
+    if (key == prod_key) or (key == test_key):
 
         active_config = getActiveConfig()
         active_beer = getActiveBeer() #Get active beer
@@ -241,7 +230,7 @@ def api(request):
             error_flag = ErrorCheck(active_config, read)
 
             #And finally, save the record
-            if key == 'beer':
+            if key == prod_key:
                 read.save()
                 SetReadInstant(active_config)
                 if error_flag: #Send error emails if necessary
@@ -260,6 +249,7 @@ def api(request):
     response = createHttpResp(read, status)
     return response
 
+@staff_member_required
 def send_command(request, command_char=None):
     if command_char == None:
         command_status = str('')
@@ -268,6 +258,7 @@ def send_command(request, command_char=None):
     request.session['command_status'] = command_status
     return HttpResponseRedirect(reverse('commands'))
 
+@staff_member_required
 def commands(request):
     blank = str('')
     command_status = blank
@@ -317,179 +308,74 @@ def commands(request):
             'details': details
            }
 
-    return render_to_response('commands.html', data)
-
-def getReadings(active_beer):
-    '''Return all readings for active_beer ordered by instant_actual'''
-    active_readings = Reading.objects.filter(beer=active_beer).order_by('instant_actual')
-    return active_readings
-
-def getArchives(active_beer):
-    '''Return all archives for active_beer ordered by reading_date'''
-    active_archives = Archive.objects.filter(beer=active_beer).order_by('reading_date')
-    return active_archives
-
-def createDF(active_beer):
+    return render_to_response('commands.html', data, context_instance=RequestContext(request))
+    
+def getAllData(cur_beer):
     '''Return a DF of reading/archive data, ordered by instant'''
-    import pandas as pd
+    active_beer = getActiveBeer()    
+    all_data = []
+    archive_data = []
+    reading_data = []
+    archive_key = ''    
+    reading_key = ''
 
-    df = pd.DataFrame(columns=['Instant', 'Temp Amb', 'Temp Beer', 'Light Amb'])
-    #Add logic for instances where no data exists
-
-    active_archives = getArchives(active_beer)
-    for archive in active_archives:
-        counter = 0
-        instant_actual_a = archive.get_instant_actual()
-        temp_amb_a = archive.get_temp_amb()
-        temp_beer_a = archive.get_temp_beer()
-        light_amb_a = archive.get_light_amb()
-
-        while counter < archive.count:
-            instant_actual = instant_actual_a[counter]
-            temp_amb = temp_amb_a[counter]
-            temp_beer = temp_beer_a[counter]
-            light_amb = light_amb_a[counter]
-            counter += 1
-
-            i = len(df)
-            df.loc[i] = [instant_actual, temp_amb, temp_beer, light_amb]
-
-    active_readings = getReadings(active_beer)
-    for reading in active_readings:
-        instant = reading.get_instant_actual()
-        temp_amb = reading.get_temp_amb()
-        temp_beer = reading.get_temp_beer()
-        light_amb = reading.get_light_amb()
-
-        i = len(df)
-        df.loc[i] = [instant, temp_amb, temp_beer, light_amb]
-
-    df = df.sort('Instant')
-    df = df.reset_index(drop=True)
-    return df
-
-def graph(request, cur_beer=None):
-    import mpld3
-
-    if cur_beer is None:
-        active_beer = getActiveBeer()
+    archive_key = getArchiveKey()
+    cache_key = cache.get('archive_key')
+    if (archive_key == cache_key) and (active_beer == cur_beer):
+        archive_data = cache.get('archive_data')
     else:
-        active_beer = Beer.objects.get(pk=cur_beer)
-
-    all_beers = getAllBeer()
-    beer_name = active_beer
-    beer_date = active_beer.brew_date
-
-    fig1 = createFig(1, active_beer)
-    fig2 = createFig(2, active_beer)
-
-    fig1_html = mpld3.fig_to_html(fig1)
-    fig2_html = mpld3.fig_to_html(fig2)
-
-    data = {
-        'all_beers': all_beers,
-        'beer_name': beer_name,
-        'beer_date': beer_date,
-        'active_beer': getActiveBeer(),
-        'fig1': fig1_html,
-        'fig2': fig2_html
-    }
-
-    return render_to_response('graph.html', data)
-
-def createFig(vers, active_beer):
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mpld
-    from mpld3 import plugins
-
-    fig, ax = plt.subplots()
-    ax.grid(True, alpha=0.3)
-    fig.set_figheight(6)
-    fig.set_figwidth(12)
-
-    css = """
-    table
-    {
-      border-collapse: collapse;
-    }
-    th
-    {
-      color: #ffffff;
-      background-color: #000000;
-    }
-    td
-    {
-      background-color: #cccccc;
-    }
-    table, th, td
-    {
-      font-family:Arial, Helvetica, sans-serif;
-      border: 1px solid black;
-      text-align: right;
-    }
-    """
-
-    df = createDF(active_beer)
-
-    if vers == 1:
-        y_temp_amb = ax.plot_date(df['Instant'], df['Temp Amb'], 'b.-', label='Temp Amb')
-        ax.set_ylabel('Temp')
-        title = str(active_beer) + ' - Temp'
-
-        y_temp_beer = ax.plot_date(df['Instant'], df['Temp Beer'], 'r.-', label='Temp Beer')
-        ax.set_ylabel('Temp')
-        title = 'Temp'
-
-        df.drop('Light Amb', axis=1, inplace=True)
-
-    if vers == 2:
-        y_light_amb = ax.plot_date(df['Instant'], df['Light Amb'], 'y.-', label='Light Amb')
-        ax.set_ylabel('Light')
-        title = 'Light'
-
-        df.drop('Temp Amb', axis=1, inplace=True)
-        df.drop('Temp Beer', axis=1, inplace=True)
-
-    instant_data = [mpld.num2date(n).strftime('%Y-%m-%d %H:%M') for n in df['Instant']]
-    df.drop('Instant', axis=1, inplace=True)
-
-    labels = []
-    for i in range(len(df.index)):
-        label = df.ix[[i], :].T
-        label.columns = [instant_data[i]]
-        # .to_html() is unicode; so make leading 'u' go away with str()
-        labels.append(str(label.to_html()))
-
-    if vers == 1:
-        tooltip = plugins.PointHTMLTooltip(y_temp_amb[0], labels,
-                                           voffset=10, hoffset=10, css=css)
-        plugins.connect(fig, tooltip)
-
-        tooltip2 = plugins.PointHTMLTooltip(y_temp_beer[0], labels,
-                                            voffset=10, hoffset=10, css=css)
-        plugins.connect(fig, tooltip2)
-
-    if vers == 2:
-        tooltip = plugins.PointHTMLTooltip(y_light_amb[0], labels,
-                                           voffset=10, hoffset=10, css=css)
-        plugins.connect(fig, tooltip)
-
-    ax.set_xlabel('Instant')
-    ax.set_title(title, size=20)
-    ax.legend(loc='best', fancybox=True, framealpha=0.5, title='')
-
-    return fig
+        archive_key = ''
+        active_archives = getAllArchives(cur_beer)
+        for archive in active_archives:
+            archive_key = archive_key + '^' + archive.get_unique_ident()
+            instant_actual_arch = archive.get_instant_actual()
+            temp_amb_arch = archive.get_temp_amb()
+            temp_beer_arch = archive.get_temp_beer()
+            light_amb_arch = archive.get_light_amb()
+            pres_beer_arch = archive.get_pres_beer()
+            counter = 0
+            while counter < archive.count:
+                data = {'dt':instant_actual_arch[counter] + "-05:00",
+                        'temp_amb':[temp_amb_arch[counter],'undefined','undefined'],
+                        'temp_beer':[temp_beer_arch[counter],'undefined','undefined'],
+                        'light_amb':[light_amb_arch[counter],'undefined','undefined'],
+                        'pres_beer':[pres_beer_arch[counter],'undefined','undefined'],
+                }
+                archive_data.append(data)
+                counter += 1
+        if active_beer == cur_beer:
+            cache.set('archive_key', archive_key)
+            cache.set('archive_data', archive_data)
+    all_data = all_data + archive_data
+    
+    reading_key = getReadingKey()
+    cache_key = cache.get('reading_key')
+    if (reading_key == cache_key) and (active_beer == cur_beer):
+        reading_data = cache.get('reading_data')
+    else:
+        reading_key = ''
+        active_readings = getAllReadings(cur_beer) 
+        for reading in active_readings:
+            reading_key = reading_key + '^' + reading.get_instant_actual()
+            data = {'dt':reading.get_instant_actual() + "-05:00",
+                    'temp_amb':[reading.get_temp_amb(),'undefined','undefined'],
+                    'temp_beer':[reading.get_temp_beer(),'undefined','undefined'],
+                    'light_amb':[reading.get_light_amb(),'undefined','undefined'],
+                    'pres_beer':[reading.get_pres_beer(),'undefined','undefined'],
+            }
+            reading_data.append(data)
+        if active_beer == cur_beer:
+            cache.set('reading_key', reading_key)
+            cache.set('reading_data', reading_data)
+    all_data = all_data + reading_data
+    
+    return all_data
 
 def dashboard(request):
-    # To do:
-    # -Add button to force a log and refresh page
-    # -Add footnote of time of last log
-    # -Function to find bgcol (and fgcol) and paint cells
-    # -Add red and/or yellow ranges to gauges and cell painting
-
+    '''Creates dashboard (gauges and table) page for the active beer'''
     active_config = getActiveConfig()
     active_beer = getActiveBeer()
-    cur_reading = getReadings(active_beer).order_by("-instant_actual")[:1].get()
+    cur_reading = getLastReading(active_beer)
 
     cur_temp_amb = cur_reading.get_temp_amb()
     cur_temp_beer = cur_reading.get_temp_beer()
@@ -529,6 +415,7 @@ def dashboard(request):
     }
     return render_to_response('dashboard.html',data)
 def get_date_diff(d1,d2):
+    '''Returns the difference between two datetime objects in a readable format'''
     diff = abs(d2-d1)
 
     if(diff.days > 0): out = str(diff.days) + " day(s) ago"
@@ -538,6 +425,7 @@ def get_date_diff(d1,d2):
 
     return(out)
 def get_paint_cols(val, rng = None):
+    '''Returns the background color for a value given a set range. In the future, it could also return foreground color'''
     if rng == None or rng == (0,0): bgcol = "#FFFFFF" #White
     elif(rng[0] <= val <= rng[1]): bgcol = "#008000" #Green
     elif(not (rng[0] <= val <= rng[1])): bgcol = "#FF0000" #Red
@@ -546,9 +434,9 @@ def get_paint_cols(val, rng = None):
     fgcol = "#000000" #Black
     return((bgcol, fgcol))
 def dashboard_update(request):
-    active_config = Config.objects.filter()[:1].get()
-    active_beer = active_config.beer
-    old_reading = Reading.objects.filter(beer=active_beer).order_by("-instant_actual")[:1].get()
+    '''Forces a log then returns to dashboard page'''
+    active_beer = getActiveBeer()
+    old_reading = getLastReading(active_beer)
 
     for i in range(4):
         command_status = send2middleware("F")
@@ -556,45 +444,74 @@ def dashboard_update(request):
         sleep(.1)
     if command_status[0] == "Success":
         for i in range(49):
-            if Reading.objects.filter(beer=active_beer).order_by("-instant_actual")[:1].get() != old_reading: break
+            if getLastReading(active_beer) != old_reading: break
             sleep(.1)
-    print(command_status[0])
     return HttpResponseRedirect(reverse('dashboard')) 
-def gen_unableToLoad(page_name):
+def gen_unableToLoad(page_name, cur_beer):
+    '''Creates a page saying the page_name for cur_berr was unable to be loaded due to no readings'''
+    #In future: allow the message (reason for unable to load page) a parameter
     data = {
         'all_beers': Beer.objects.all(),
         'active_beer': getActiveBeer(),
         'page_name': page_name,
+        'cur_beer': cur_beer,
     }
     return render_to_response('unabletoload.html',data)
-def annotationchart(request, cur_beer = None):
-    if cur_beer is None: active_beer = getActiveBeer()
-    else: active_beer = Beer.objects.get(pk=cur_beer)
+def chart(request, cur_beer = None):
+    '''Creates a chart page with the Google Annotation Chart'''
+    #In future: send alerts too
+    if cur_beer is None: cur_beer = getActiveBeer()
+    else: cur_beer = Beer.objects.get(pk=cur_beer)
+    active_beer = getActiveBeer()
+    #active_beer is the system config active
+    #cur_beer is the beer that is being charted    
+
+    plot_data = getAllData(cur_beer)   
+   
+    last_read = getLastReading(cur_beer)
+    last_archive = None
     
-    readings = getReadings(active_beer)
-    plot_data = []
-    for r in readings:
-        add = [r.instant_actual.isoformat(), r.get_temp_amb(), 'undefined', 'undefined', r.get_temp_beer(), 'undefined', 'undefined']
-        plot_data.append(add)
+    if bool(last_read):
+        start_date = getLastReading(cur_beer).instant_actual.date()
+    else:
+        last_archive = getLastArchive(cur_beer)
+    
+    if bool(last_archive):
+        start_date = last_archive.reading_date
+    else:
+        start_date = datetime.date.today()
+   
+    #Get start_date which is 7 days before the last logged date.
+    start_date = start_date - timedelta(days=7)   
     
     data = {
         'all_beers': Beer.objects.all(),
         'active_beer': active_beer,
+        'cur_beer': cur_beer,
         'plot_data': plot_data,
-        "beer_date": active_beer.brew_date,
+        'beer_date': cur_beer.brew_date,
+        'start_date': start_date.isoformat()
     }
-    return render_to_response('annotationchart.html', data)
+    return render_to_response('chart.html', data)
 def data_chk(request, page_name, cur_beer = None):
+    '''Checks if we have readings for cur_beer then if page_name exists and then creates appropriate page'''
     if cur_beer is None: active_beer = getActiveBeer()
     else: active_beer = Beer.objects.get(pk=cur_beer)
     
-    read_chk = getReadings(active_beer)[:1]
+    isData = False
+    read_chk = getLastReading(active_beer)
+    if bool(read_chk):
+        isData = True
+    else:
+        arch_chk = getLastArchive(active_beer)
+        if bool(arch_chk):
+            isData = True
     
-    if(not bool(read_chk)): out = gen_unableToLoad(page_name)
+    if not bool(isData):
+        out = gen_unableToLoad(page_name, active_beer)
     else:
         if page_name.upper() == "DASHBOARD": out = dashboard(request)
-        elif page_name.upper() == "GRAPH": out = graph(request, cur_beer)
-        elif page_name.upper() == "ANNOTATIONCHART": out = annotationchart(request, cur_beer)
+        elif page_name.upper() == "CHART": out = chart(request, cur_beer)
         else: out = "404 Page Not Found"
     
     return out

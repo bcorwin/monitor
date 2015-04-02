@@ -12,13 +12,15 @@ class Beer(models.Model):
 class Archive(models.Model):
     
     beer = models.ForeignKey(Beer)
-    reading_date = models.DateField('Reading Date')
+    reading_date = models.DateField('Reading Date',db_index=True)
     instant_actual = models.TextField('Instant Actual')
     light_amb = models.TextField('Ambient Light')
     pres_beer = models.TextField('Beer Pressure')
     temp_amb = models.TextField('Ambient Temp')
     temp_beer = models.TextField('Beer Temp')
     count = models.PositiveIntegerField('Count', default=0)
+    update_instant = models.DateTimeField('Last Updated',blank=True,
+                                      null=True,default=None)    
     
     def __str__(self):
         value = str(self.beer) + ': '
@@ -31,7 +33,7 @@ class Archive(models.Model):
         if bool(val):
             out = val.split('^')
             del out[-1]
-            out = [float(n) for n in out]
+            out = [str(n) for n in out]
         return out     
         
     def get_light_amb(self):
@@ -70,6 +72,20 @@ class Archive(models.Model):
         value = self.count
         return value
     
+    def get_update_instant(self):
+        value = self.update_instant
+        value = value.isoformat()
+        return value
+    
+    def get_reading_date(self):
+        value = self.reading_date
+        value = value.isoformat()
+        return value
+
+    def get_unique_ident(self):
+        value = str(self.get_reading_date()) + '|' + str(self.get_update_instant())
+        return value        
+        
 class Reading(models.Model):
 
     temp_choices = (
@@ -82,7 +98,9 @@ class Reading(models.Model):
     instant_override = models.DateTimeField('Instant Override',blank=True,
                                             null=True,default=None)
     instant_actual = models.DateTimeField('Instant Actual',blank=True,
-                                            null=True,default=None)
+                                          null=True,default=None)
+    instant_actual_iso = models.SlugField('Instant Actual (ISO)', blank = True,
+                                          null=True,default=None,db_index=True)
     light_amb = models.DecimalField('Ambient Light', max_digits=5,
                                     decimal_places=2,blank=True,null=False,
                                     default=0)
@@ -102,9 +120,7 @@ class Reading(models.Model):
     error_details = models.CharField('Error Details',blank=True,max_length=150)
             
     def get_instant_actual(self):
-        import matplotlib.dates as mpld
-        value = self.instant_actual
-        value = mpld.date2num(value)
+        value = self.instant_actual_iso
         return value
         
     #Break out conversion into a new function, combine with get_temp_beer
@@ -139,14 +155,14 @@ class Reading(models.Model):
         return value
         
     def save(self, *args, **kwargs):
-        
+              
         super(Reading, self).save(*args, **kwargs)
         
-        #Set instant_actual before each save            
         if bool(self.instant_override):
             self.instant_actual = self.instant_override
         else:
             self.instant_actual = self.instant
+        self.instant_actual_iso = self.instant_actual.isoformat()
 
         super(Reading, self).save(*args, **kwargs)
 
@@ -182,6 +198,13 @@ class Config(models.Model):
                                      max_length=150)
     email_last_instant = models.DateTimeField('Last Email Instant',blank=True,
                                 null=True,default=None)
-        
+    
+    api_server_url = models.CharField('Server URL',default='',blank=True,max_length=50)
+    api_prod_key = models.CharField('Prod API Key',default='',blank=True,max_length=50)
+    api_test_key = models.CharField('Test API Key',default='',blank=True,max_length=50)
+    
+    reading_key = models.TextField()
+    archive_key = models.TextField()
+    
     def __str__(self):
         return 'Config' + ': ' + str(self.pk)

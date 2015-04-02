@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<!-- Template by html.am -->
+
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>Chart</title>
+        
+		{% load staticfiles %}
+        <link rel="stylesheet" type="text/css" href="{% static 'allStyle.css' %}">
+        
+        <script type="text/javascript" src="https://www.google.com/jsapi?autoload={'modules':[{'name':'visualization','version':'1','packages':['annotationchart']}]}"></script>
+        <script type='text/javascript'>
+        google.load('visualization', '1', {'packages':['annotationchart']});
+        google.setOnLoadCallback(drawChart);
+        function drawChart() {
+            init_vals = typeof init_vals !== 'undefined' ? init_vals : ['Ambient Temp', 'Beer Temp'];
+            default_cols = ["#3366cc","#dc3912","#ff9900","#109618","#990099","#0099c6","#dd4477","#aa aa11","#22aa99","#994499"];
+            col_list = []
+            if (init_vals.indexOf('Ambient Temp')   >= 0) col_list.push(default_cols[0]);
+            if (init_vals.indexOf('Beer Temp')      >= 0) col_list.push(default_cols[1]);
+            if (init_vals.indexOf('Ambient Light')  >= 0) col_list.push(default_cols[2]);
+            if (init_vals.indexOf('Beer Pressure')  >= 0) col_list.push(default_cols[3]);
+            
+            var data = new google.visualization.DataTable();
+            data.addColumn('datetime', 'Log Time');
+            data.addColumn('number', 'Ambient Temp');
+            data.addColumn('string', 'Ambient Temp title');
+            data.addColumn('string', 'Ambient Temp text');
+            data.addColumn('number', 'Beer Temp');
+            data.addColumn('string', 'Beer Temp title');
+            data.addColumn('string', 'Beer Temp text');
+            data.addColumn('number', 'Ambient Light');
+            data.addColumn('string', 'Ambient Light title');
+            data.addColumn('string', 'Ambient Light text');
+            data.addColumn('number', 'Beer Pressure');
+            data.addColumn('string', 'Beer Pressure title');
+            data.addColumn('string', 'Beer Pressure text');
+            data.addRows([  {% for row in plot_data %}
+                                [new Date("{{ row.dt|safe }}"),
+                                    {{ row.temp_amb.0|safe }},
+                                    {{ row.temp_amb.1|safe }},
+                                    {{ row.temp_amb.2|safe }},
+                                    {{ row.temp_beer.0|safe }},
+                                    {{ row.temp_beer.1|safe }},
+                                    {{ row.temp_beer.2|safe }},
+                                    {{ row.light_amb.0|safe }},
+                                    {{ row.light_amb.1|safe }},
+                                    {{ row.light_amb.2|safe }},
+                                    {{ row.pres_beer.0|safe }},
+                                    {{ row.pres_beer.1|safe }},
+                                    {{ row.pres_beer.2|safe }},
+                                ],
+                            {% endfor%}
+                        ]);
+
+            var columnsTable = new google.visualization.DataTable();
+            columnsTable.addColumn('number', 'colIndex');
+            columnsTable.addColumn('string', 'colLabel');
+            var initState= {selectedValues: init_vals};
+            // put the columns into this data table (skip column 0)
+            for (var i = 1; i < data.getNumberOfColumns(); i = i + 3) {
+                columnsTable.addRow([i, data.getColumnLabel(i)]);
+            }
+
+            var chart = new google.visualization.ChartWrapper({
+                chartType: 'AnnotationChart',
+                containerId: 'chart_div',
+                dataTable: data,
+                options: {
+                    displayAnnotationsFilter: true,
+                    displayAnnotations: true,
+                    scaleType: 'allmaximized',
+                    displayZoomButtons: false,
+                    zoomStartTime: new Date("{{start_date}}"),
+                    colors: col_list,
+                }
+            });
+            
+            var columnFilter = new google.visualization.ControlWrapper({
+                controlType: 'CategoryFilter',
+                containerId: 'colFilter_div',
+                dataTable: columnsTable,
+                options: {
+                    filterColumnLabel: 'colLabel',
+                    ui: {
+                        label: 'Measurements to display:',
+                        allowTyping: false,
+                        allowMultiple: true,
+                        allowNone: false,
+                        selectedValuesLayout: 'aside',
+                    }
+                },
+                state: initState
+            });
+            
+            function setChartView () {
+                var state = columnFilter.getState();
+                var row;
+                var view = {
+                    columns: [0]
+                };
+                for (var i = 0; i < state.selectedValues.length; i++) {
+                    row = columnsTable.getFilteredRows([{column: 1, value: state.selectedValues[i]}])[0];
+                    view.columns.push(columnsTable.getValue(row, 0));
+                    view.columns.push(columnsTable.getValue(row, 0)+1);
+                    view.columns.push(columnsTable.getValue(row, 0)+2);
+                }
+                // sort the indices into their original order
+                view.columns.sort(function (a, b) {
+                    return (a - b);
+                });
+                chart.setView(view);
+                chart.draw();
+            }
+            google.visualization.events.addListener(columnFilter, 'statechange', setChartView);
+            
+            setChartView();
+            columnFilter.draw();
+        }
+        </script>
+	</head>
+	
+	<body>		
+				
+		<main>
+        <div class="innertube">
+            <h1>{{cur_beer}} - {{beer_date}}</h1>
+            
+            <div id='chart_div' style='width: 900px; height: 500px;'></div><br>
+            <h3>Measurement selection:</h3>
+            <input id="button_temp" type="button" value="Temperature Values" onclick="drawChart(init_vals=['Ambient Temp', 'Beer Temp']);" />
+            <input id="button_light" type="button" value="Ambient Light" onclick="drawChart(init_vals=['Ambient Light']);" />
+            <input id="button_pres" type="button" value="Beer Pressure" onclick="drawChart(init_vals=['Beer Pressure']);" />
+            <input id="button_all" type="button" value="All" onclick="drawChart(init_vals=['Ambient Temp', 'Beer Temp', 'Ambient Light', 'Beer Pressure']);" />
+            <div id='colFilter_div' style="display: none;"></div>
+        </div>
+		</main>
+	
+		<nav id="nav">
+			<div class="innertube">
+			
+			<h3>Beers</h3>
+			<ul>
+				<li><a href="/monitor/chart/">Active Beer</a></li>
+                {% for beer in all_beers %}
+                {% if beer == active_beer %}
+                    <b><li><a href="/monitor/chart/{{ beer.id }}/">{{ beer }}</a></li></b>                
+                {% else %}
+                    <li><a href="/monitor/chart/{{ beer.id }}/">{{ beer }}</a></li>
+                {% endif %}
+                {% endfor %}
+			</ul>
+			<h3>Options</h3>
+			<ul>
+                <li><a href="/monitor/dashboard/">Dashboard</a></li>
+				<li><a href="/monitor/commands/">Commands</a></li>
+				<li><a href="/admin/">Admin</a></li>
+			</ul>
+			</div>
+		</nav>
+	
+	</body>
+</html>
