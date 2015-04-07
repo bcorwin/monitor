@@ -12,6 +12,7 @@ urlpatterns = patterns('',
     url(r'^chart/(?P<cur_beer>\d+)/$', views.chart),
     url(r'^dashboard/$', views.dashboard, name='dashboard'),
     url(r'^dashboard/update/$', views.dashboard_update, name='dashboard_update'),
+    url(r'^export/((?P<cur_beer>\d+)/){0,1}$', views.export, name='export_default'),
     url(r'^$', views.data_chk),
 )
 

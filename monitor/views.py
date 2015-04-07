@@ -20,6 +20,7 @@ from datetime import timedelta
 from postmark import PMMail
 import datetime
 import pytz
+import csv
 
 def floatFromPost(request, field):
     '''Returns float() or float(0) for a given POST parameter'''
@@ -541,3 +542,15 @@ def data_chk(request, page_name = "dashboard", cur_beer = None):
         else: out = "404 Page Not Found"
     
     return out
+def export(request, cur_beer = None):
+    '''Exports archived data'''
+    if cur_beer is None: cur_beer = getActiveBeer()
+    else: cur_beer = Beer.objects.get(pk=cur_beer)
+    fname = cur_beer.beer_text + ".csv"
+    archived_data(getAllData(cur_beer)[0])
+    r = HttpResponse(content_type = "text/csv")
+    r["Content-Disposition"] = "attachment; filename = '" + fname + "'"
+    print(cur_beer._meta.fields)
+    writer = csv.writer(r)
+    writer.writerow(["Test 1", "Test 2"])
+    writer.writerow(["10", "20"])
