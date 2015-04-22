@@ -78,7 +78,7 @@
                     setInterval(function()
                         {
                             state = !state;
-                            var color = (state?'red':'white');
+                            var color = (state?'{{ alert_col }}':'white');
                             document.getElementById('cell_' + '{{ alert_var }}' ).style.backgroundColor = color;
                         }, 500);
                 }

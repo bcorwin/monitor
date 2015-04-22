@@ -260,6 +260,10 @@ def dashboard(request):
         "active_beer": active_beer,
         "beer_date": active_beer.brew_date,
     }
+    #Alert flash color based on BG, unless white, make it orange.
+    col = data["bgcols"][alert_var] if alert_var != None else "#FFFFFF"
+    data["alert_col"] = col if col != "#FFFFFF" else "#FFA500"
+    
     return render_to_response('dashboard.html',data)
 
 def dashboard_update(request):
